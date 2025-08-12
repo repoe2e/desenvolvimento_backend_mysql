@@ -4,8 +4,7 @@ pipeline {
     environment {
         BACKEND_REPO = 'https://github.com/repoe2e/desenvolvimento_backend_mysql.git'
        // TESTS_REPO = 'https://github.com/e2e-coders/loja_e2e_api_tests.git'
-        BACKEND_DIR = 'loja_e2e'
-        TESTS_DIR = 'api_tests'
+       // TESTS_DIR = 'api_tests'
     }
 
     stages {
@@ -27,7 +26,7 @@ pipeline {
         stage('Start aplicação') {
             steps {
                 dir("${BACKEND_DIR}") {
-                    bat 'start /B mvn spring-boot:run'
+                    bat 'start /B mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=9090"'
                     sleep time: 30, unit: 'SECONDS' // Aguarda a API subir
                 }
             }
@@ -44,8 +43,7 @@ pipeline {
 
     post {
         always {
-            echo "Finalizando pipeline"
-            bat 'taskkill /F /IM java.exe' // Encerra a aplicação (use com cautela: mata todos processos java!)
+            echo "Aplicação no ar"
         }
     }
 }
