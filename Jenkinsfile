@@ -2,9 +2,12 @@ pipeline {
   agent any
 
   environment {
-    BACKEND_DIR = '.'
-    APP_PORT    = '8085'
-    HEALTH_PATH = '/actuator/health'   // troque para '/' se não usar actuator
+    BACKEND_DIR  = '.'
+    APP_DIR      = 'C:\\apps\\meu-sistema'
+    APP_JAR_PATH = "${APP_DIR}\\app.jar"
+    SERVICE_NAME = 'meu-sistema'
+    APP_PORT     = '8085'
+    NSSM = 'C:\\nssm-2.24\\win64\\nssm.exe'
   }
 
   stages {
@@ -18,51 +21,71 @@ pipeline {
       }
     }
 
-    stage('Start app (bg + log)') {
+    stage('Deploy (copiar jar)') {
       steps {
         dir("${env.BACKEND_DIR}") {
-          // 1) Descobrir JAR e liberar porta
           bat '''
-          for /f "delims=" %%i in ('dir /b target\\*.jar') do set "APP_JAR=target\\%%i"
-          if not defined APP_JAR (
-            echo ERRO: Nenhum JAR encontrado em target\\*.jar
+          if not exist target\\*.jar (
+            echo [ERRO] Nenhum JAR em target\\*.jar
             exit /b 1
           )
-
-          rem Matar processo que estiver usando a porta (se houver)
-          for /f "tokens=5" %%p in ('netstat -aon ^| findstr :%APP_PORT% ^| findstr LISTENING') do (
-            echo Encerrando PID %%p que ocupa a porta %APP_PORT%...
-            taskkill /PID %%p /F >NUL 2>&1
-          )
-
-          echo Iniciando %APP_JAR% na porta %APP_PORT% > boot.log
-          start "" /B cmd /c "java -jar %APP_JAR% --server.port=%APP_PORT% >> boot.log 2>&1"
+          if not exist "%APP_DIR%" mkdir "%APP_DIR%"
+          for /f "delims=" %%i in ('dir /b target\\*.jar') do copy /Y "target\\%%i" "%APP_JAR_PATH%"
           '''
-        }
-
-        // 2) Esperar subir (até 180s) e aceitar 2xx–4xx
-        timeout(time: 180, unit: 'SECONDS') {
-          waitUntil {
-            script {
-              def url = "http://localhost:${env.APP_PORT}${env.HEALTH_PATH}"
-              // tenta /actuator/health; se 404, tenta raiz
-              def code = bat(script: "curl -s -o NUL -w %%{http_code} ${url}", returnStdout: true).trim()
-              if (code == '404') {
-                code = bat(script: "curl -s -o NUL -w %%{http_code} http://localhost:${env.APP_PORT}/", returnStdout: true).trim()
-              }
-              echo "HTTP: ${code}"
-              // considera OK qualquer resposta que não seja 000 e não seja 5xx
-              return (code != '000' && !code.startsWith('5'))
-            }
-          }
+          bat 'dir "%APP_DIR%"'
         }
       }
     }
 
-    stage('Mostrar últimas linhas do log') {
+    stage('Instalar/Atualizar serviço (NSSM)') {
       steps {
-        dir("${env.BACKEND_DIR}") {
-          bat 'powershell -Command "if (Test-Path boot.log) { Get-Content -Path boot.log -Tail 120 } else { Write-Host \\"boot.log não encontrado\\" }"'
+        // instala o serviço uma única vez se não existir
+        bat '''
+        sc query "%SERVICE_NAME%" >NUL 2>&1
+        if errorlevel 1 (
+          echo Instalando servico %SERVICE_NAME% via NSSM...
+          "%NSSM%" install %SERVICE_NAME% java
+          "%NSSM%" set %SERVICE_NAME% AppDirectory "%APP_DIR%"
+          "%NSSM%" set %SERVICE_NAME% AppParameters "-jar app.jar --server.port=%APP_PORT%"
+          "%NSSM%" set %SERVICE_NAME% AppStdout "%APP_DIR%\\stdout.log"
+          "%NSSM%" set %SERVICE_NAME% AppStderr "%APP_DIR%\\stderr.log"
+          "%NSSM%" set %SERVICE_NAME% Start SERVICE_AUTO_START
+        ) else (
+          echo Servico %SERVICE_NAME% ja existe.
+        )
+        '''
+        // stop -> start com o novo jar
+        bat '''
+        echo Parando %SERVICE_NAME% (se estiver rodando)...
+        "%NSSM%" stop %SERVICE_NAME% >NUL 2>&1
+        rem aguarda ate 20s o servico parar
+        for /L %%s in (1,1,20) do (
+          sc query "%SERVICE_NAME%" | find /I "STOPPED" >NUL && goto :stopped
+          ping -n 2 127.0.0.1 >NUL
+        )
+        :stopped
+        echo Iniciando %SERVICE_NAME%...
+        "%NSSM%" start %SERVICE_NAME%
+        '''
+      }
+    }
+
+    stage('Healthcheck') {
+      steps {
+        // espera até 180s por resposta HTTP != 000 e != 5xx (tolerante)
+        timeout(time: 180, unit: 'SECONDS') {
+          waitUntil {
+            script {
+              def code = bat(script: "curl -s -o NUL -w %%{http_code} http://localhost:%APP_PORT%/", returnStdout: true).trim()
+              if (code == '404' || code == '401') {
+                // se raiz responder 404/401, considere OK porque o Tomcat subiu
+                echo "HTTP: ${code}"
+                return true
+              }
+              echo "HTTP: ${code}"
+              return (code != '000' && !code.startsWith('5'))
+            }
+          }
         }
       }
     }
@@ -70,16 +93,17 @@ pipeline {
 
   post {
     always {
-      // Sempre anexar log ao final do job
-      dir("${env.BACKEND_DIR}") {
-        bat 'powershell -Command "if (Test-Path boot.log) { Write-Host \'\\n--- boot.log (tail) ---\'; Get-Content -Path boot.log -Tail 200 }"'
-      }
+      echo "Logs do serviço (tails):"
+      bat 'powershell -Command "if (Test-Path \'%APP_DIR%\\stdout.log\') { Get-Content -Path \'%APP_DIR%\\stdout.log\' -Tail 120 }"'
+      bat 'powershell -Command "if (Test-Path \'%APP_DIR%\\stderr.log\') { Get-Content -Path \'%APP_DIR%\\stderr.log\' -Tail 120 }"'
+      bat 'sc query "%SERVICE_NAME%"'
+      bat 'netstat -aon | findstr :%APP_PORT% | findstr LISTENING'
     }
     success {
-      echo "✅ App no ar em http://localhost:${env.APP_PORT}/ (mantendo em execução)"
+      echo "✅ Deploy concluído. Serviço '%SERVICE_NAME%' ativo em http://localhost:${env.APP_PORT}/"
     }
     failure {
-      echo "❌ Falhou. Veja o boot.log acima e o console para detalhes."
+      echo "❌ Falha no deploy. Veja os logs acima (stdout/stderr) e o estado do serviço."
     }
   }
 }
