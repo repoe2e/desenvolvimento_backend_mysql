@@ -1,33 +1,57 @@
-HELP.md
-target/
-.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
+# Maven
+/target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/
+log/
+*.log
 
-### STS ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
+# Eclipse
+*.classpath
+*.project
+*.settings/
 
-### IntelliJ IDEA ###
-.idea
-*.iws
+# IntelliJ IDEA
 *.iml
-*.ipr
+.idea/
+out/
 
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### VS Code ###
+# VS Code
 .vscode/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Arquivos de ambiente e segurança
+*.env
+*.key
+*.pem
+*.crt
+
+# Arquivos temporários
+*.tmp
+*.bak
+*.swp
+
+# Banco de dados H2 (se usar)
+*.h2.db
+*.mv.db
+
+# Testes e relatórios
+/test-output/
+/surefire-reports/
+/jacoco.exec
+
+# Arquivos gerados por compiladores
+*.class
+
+# Logs
+*.log
+logs/
+*.pid
+
+# Arquivos de build
+/build/
+
+# Arquivos do Spring Boot devtools
+.spring-boot-devtools.properties
